@@ -22,7 +22,10 @@ export default function App() {
   }, []);
 
   // Base URL for API requests (supports external backend deployment)
-  const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+  const API_BASE = (
+    import.meta.env.VITE_API_URL ||
+    (import.meta.env.PROD ? 'https://cinematch-0d4t.onrender.com' : '')
+  ).replace(/\/+$/, '');
 
   // Simple autocomplete search
   const handleInputChange = async (e) => {
