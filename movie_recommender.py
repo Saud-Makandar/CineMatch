@@ -21,13 +21,29 @@ from src.recommender import CineMatchKNN
 # Create Flask application
 app = Flask(__name__)
 
-# Enable CORS for frontend requests
+# Enable CORS for frontend requests across all origins
+try:
+    from flask_cors import CORS
+    CORS(app)
+except ImportError:
+    pass
+
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     return response
+
+
+@app.route("/", methods=["GET"])
+def home():
+    """Root endpoint to easily test that backend is alive."""
+    return jsonify({
+        "status": "online",
+        "service": "CineMatch AI Recommender API",
+        "documentation": "/api/health, /api/recommend?movie=Inception, /api/movies?q=toy"
+    })
 
 
 # Load data and train KNN model

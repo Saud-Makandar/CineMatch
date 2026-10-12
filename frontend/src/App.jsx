@@ -21,13 +21,16 @@ export default function App() {
     fetchRecommendations('Inception');
   }, []);
 
+  // Base URL for API requests (supports external backend deployment)
+  const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
   // Simple autocomplete search
   const handleInputChange = async (e) => {
     const val = e.target.value;
     setQuery(val);
     if (val.trim().length >= 2) {
       try {
-        const res = await fetch(`/api/movies?q=${encodeURIComponent(val)}&limit=5`);
+        const res = await fetch(`${API_BASE}/api/movies?q=${encodeURIComponent(val)}&limit=5`);
         if (res.ok) {
           const data = await res.json();
           setSuggestions(data.movies || []);
@@ -50,7 +53,7 @@ export default function App() {
     setSuggestions([]);
 
     try {
-      const res = await fetch(`/api/recommend?movie=${encodeURIComponent(titleToSearch)}&top_k=6`);
+      const res = await fetch(`${API_BASE}/api/recommend?movie=${encodeURIComponent(titleToSearch)}&top_k=6`);
       const data = await res.json();
 
       if (data.status === 'success') {
