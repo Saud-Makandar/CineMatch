@@ -1,0 +1,11 @@
+{
+  "name": "cinematch-movie-recommender",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CineMatch AI Movie Recommender System",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview"
+  }
+}

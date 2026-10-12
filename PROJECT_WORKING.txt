@@ -1,0 +1,324 @@
+===================================================================================
+CINEMATCH: COMPLETE END-TO-END PURE KNN ARCHITECTURE & TECHNICAL GUIDE
+Intelligent Data Systems - Movie Recommendation & Analytics Engine
+===================================================================================
+
+This document provides a comprehensive, technical, and architectural breakdown of CineMatch.
+The project is built entirely on Item-Based Collaborative Filtering using K-Nearest
+Neighbors (KNN) with Cosine Similarity, served by a Flask REST API, and presented
+through a modern React 18 + Vite Web Application.
+
+-----------------------------------------------------------------------------------
+TABLE OF CONTENTS
+-----------------------------------------------------------------------------------
+1. System Architecture & High-Level Flow
+2. Machine Learning & Data Science Core (Pure KNN Engine)
+   - 2.1 Dataset Schema & Raw Data
+   - 2.2 Ingestion, Cleaning & Sparsity Reduction Pipeline
+   - 2.3 Item-Based Collaborative Filtering (KNN with Cosine Similarity)
+   - 2.4 Title Normalization & Multi-Tier Search Engine
+   - 2.5 Dynamic Genre Filtering with Neighbor Pool Expansion
+   - 2.6 Statistical Exploratory Data Analysis (EDA)
+   - 2.7 Offline Model Evaluation (Precision@K & Recall@K)
+3. Backend Architecture (Flask REST API)
+   - 3.1 Lifecycle & In-Memory State
+   - 3.2 Endpoints Specification
+   - 3.3 Error Handling & Edge Cases
+4. Frontend Architecture (React + Vite Web App)
+   - 4.1 UI Design & Tech Stack
+   - 4.2 State Management & Interactive Components
+   - 4.3 Vite Reverse Proxy Setup
+5. End-to-End Execution Flow (From User Click to Screen Render)
+6. Automated Unit Testing & Verification
+7. How to Run the Project
+8. Viva & Technical Interview Q&A (FAQ)
+
+===================================================================================
+1. SYSTEM ARCHITECTURE & HIGH-LEVEL FLOW
+===================================================================================
+
+[DATA LAYER]
+  movies.csv (9,742 records) + ratings.csv (100,836 records)
+       |
+       v
+[PREPROCESSING & PIPELINE (src/data_processing.py)]
+  - Deduplication & null removal
+  - Year extraction from title: "Toy Story (1995)" -> 1995
+  - Sparsity filter: Movies >= 10 ratings, Users >= 5 ratings
+  - Matrix sparsity reduced from 98.30% down to 94.14%
+  - Pivot Table (2,269 Movies x 610 Users) -> CSR Sparse Matrix Compression
+       |
+       v
+[MACHINE LEARNING ENGINE (src/recommender.py, src/evaluation.py, src/eda.py)]
+  - Pure Item-Based KNN: NearestNeighbors(metric="cosine", algorithm="brute")
+  - High-dimensional vector query: argmin (1 - cos(theta))
+  - Precision@K & Recall@K evaluation on stratified 80/20 train/test split
+       |
+       v
+[FLASK REST API BACKEND (server.py - Port 5000)]
+  - Precomputed cache in global STATE dictionary
+  - CORS enabled
+  - Endpoints: /api/recommend, /api/movies, /api/stats, /api/evaluation, /api/health
+       |
+       v (HTTP / JSON via Vite Reverse Proxy)
+[REACT 18 + VITE FRONTEND (frontend/ - Port 5173)]
+  - Search bar with live autocomplete dropdown
+  - Quick-pick recommendation chips
+  - Genre filter dropdown & Top-K selector (6, 9, 12)
+  - Seed movie spotlight banner & rich card grid with similarity percentages
+
+===================================================================================
+2. MACHINE LEARNING & DATA SCIENCE CORE (PURE KNN ENGINE)
+===================================================================================
+
+2.1 DATASET SCHEMA & RAW DATA
+-----------------------------
+1. movies.csv (9,742 rows):
+   - movieId (int): Primary key.
+   - title (str): Full title with release year, e.g. "Matrix, The (1999)".
+   - genres (str): Pipe-delimited genres, e.g. "Action|Sci-Fi|Thriller".
+
+2. ratings.csv (100,836 rows):
+   - userId (int): Anonymized user ID (610 unique users).
+   - movieId (int): Foreign key referencing movies.csv.
+   - rating (float): Explicit rating score from 0.5 to 5.0 (0.5 star intervals).
+   - timestamp (int): Unix epoch submission time.
+
+2.2 INGESTION, CLEANING & SPARSITY REDUCTION PIPELINE
+----------------------------------------------------
+- Cleaning Steps:
+  1. Deduplicate movieId and (userId, movieId) pairs.
+  2. Drop the timestamp column (not needed for collaborative filtering).
+  3. Validate rating bounds: 0.5 <= rating <= 5.0.
+  4. Regex year extraction: r"\((\d{4})\)" parses release year.
+  5. Compute aggregate stats: num_ratings and avg_rating per movie.
+
+- The Sparsity Problem:
+  Formula: Sparsity = (1 - (Interactions / (Users * Items))) * 100%
+  * Raw Sparsity = (1 - (100,836 / (610 * 9,742))) * 100% = 98.30%
+  * Filter criteria: Movies with >= 10 ratings and Users with >= 5 ratings.
+  * Result: 2,269 qualified movies x 610 users.
+  * Filtered Sparsity = (1 - (79,636 / (610 * 2,269))) * 100% = 94.14%
+
+- Matrix Compression:
+  The 2,269 x 610 pivot matrix is compressed into a Compressed Sparse Row (CSR)
+  matrix (scipy.sparse.csr_matrix) for memory efficiency and accelerated vector math.
+
+2.3 ITEM-BASED COLLABORATIVE FILTERING (KNN WITH COSINE SIMILARITY)
+------------------------------------------------------------------
+Why Item-Based over User-Based?
+1. Item-item correlation is far more stable over time than fluctuating user taste.
+2. The item catalog is more static than a rapidly changing user base.
+3. Recommendations are explainable ("Because you liked X, you may like Y").
+
+Mathematical Formulation:
+- Movie vector u = [r_1, r_2, ..., r_N] in user rating space.
+- Cosine Similarity:
+    sim(u, v) = (u . v) / (||u||_2 * ||v||_2)
+- Cosine Distance (Loss Metric):
+    dist(u, v) = 1 - sim(u, v)
+- Model:
+    Scikit-Learn NearestNeighbors(metric="cosine", algorithm="brute").
+    Queries the K closest neighbors minimizing Cosine Distance.
+    Match Percentage = (1.0 - distance) * 100%.
+
+2.4 TITLE NORMALIZATION & MULTI-TIER SEARCH ENGINE
+-------------------------------------------------
+Implemented in CineMatchKNN.find_movie:
+- Tier 1: Exact case-insensitive string match.
+- Tier 2: Transposed articles handling ("The Matrix" <-> "Matrix, The").
+- Tier 3: Stop-word filtered token overlap scoring (requires >= 50% match).
+
+2.5 DYNAMIC GENRE FILTERING WITH NEIGHBOR POOL EXPANSION
+--------------------------------------------------------
+When filtering recommendations by a genre:
+- The candidate search pool expands dynamically up to min(|M|, max(4K + 1, 30)).
+- Checks each neighbor's metadata against the selected genre.
+- Returns the top K closest neighbors matching the requested genre.
+
+2.6 STATISTICAL EXPLORATORY DATA ANALYSIS (EDA)
+-----------------------------------------------
+Computed on all 100,836 explicit ratings:
+- Count: 100,836
+- Mean: 3.50
+- Median: 3.50
+- Mode: 4.00
+- Standard Deviation: 1.04
+- Variance: 1.09
+- Skewness: -0.64 (Negative skew: users preferentially rate movies they enjoy)
+- IQR: 1.00 (50% of ratings fall between 3.0 and 4.0)
+
+2.7 OFFLINE MODEL EVALUATION (PRECISION@K & RECALL@K)
+----------------------------------------------------
+- Evaluation Protocol:
+  * Active users (>= 15 ratings) partitioned into 80% train / 20% test.
+  * Relevance threshold: rating >= 3.5.
+  * Precision@K = (Hits in Top K) / K
+  * Recall@K = (Hits in Top K) / (Total Relevant Test Items)
+
+- CineMatch KNN Benchmark Results:
+  * Precision@5:  6.89%
+  * Recall@5:     3.67%
+  * Precision@10: 5.27%
+  * Recall@10:    6.02%
+
+===================================================================================
+3. BACKEND ARCHITECTURE (FLASK REST API)
+===================================================================================
+
+File: server.py (Runs on port 5000)
+
+3.1 LIFECYCLE & IN-MEMORY STATE
+-------------------------------
+During startup, initialize_app_data():
+1. Preprocesses movies.csv and ratings.csv.
+2. Trains CineMatchKNN model.
+3. Precomputes genre lists and catalog search lists.
+4. Stores all objects in a global STATE dictionary.
+5. Enables CORS for all routes.
+
+3.2 ENDPOINTS SPECIFICATION
+---------------------------
+- GET /api/health
+  Returns system status, total movies, and matrix dimensions.
+
+- GET /api/movies?q=<query>&genre=<genre>&limit=<limit>
+  Returns autocomplete suggestions and the complete unique genre list.
+
+- GET /api/recommend?movie=<name>&top_k=<k>&genre=<genre>
+  Generates KNN personalized recommendations with seed movie metadata.
+
+- GET /api/stats
+  Returns summary statistics, rating frequency distribution, and genre breakdown.
+
+- GET /api/evaluation
+  Runs and returns cached offline model evaluation of the KNN model.
+
+3.3 ERROR HANDLING
+------------------
+- Missing query parameter -> 400 Bad Request.
+- Unrecognized movie -> Returns 200 with status: "not_found" and suggestion candidates.
+- Sparse genre filtering -> Dynamically expands neighbor search up to 30 items.
+
+===================================================================================
+4. FRONTEND ARCHITECTURE (REACT + VITE WEB APP)
+===================================================================================
+
+Directory: frontend/ (Runs on port 5173)
+
+4.1 UI DESIGN & TECH STACK
+--------------------------
+- React 18 with modern functional components & hooks (useState, useEffect).
+- Vite build tool and development server.
+- Lucide React icons (Search, Film, Star, Sparkles, Loader2).
+- Clean custom CSS design system (slate background, indigo accents, card drop shadows).
+
+4.2 STATE MANAGEMENT & COMPONENTS (App.jsx)
+-------------------------------------------
+- Live Autocomplete: User types >= 2 letters -> calls /api/movies?q=...
+- Quick-Pick Chips: "Inception", "Toy Story", "Matrix, The", "Dark Knight, The", etc.
+- Genre & Top-K Controls: Real-time filter triggering immediate re-fetch.
+- Seed Movie Spotlight: Card displaying chosen movie's rating, votes, and genres.
+- Movie Cards: Displays Match Percentage badge, Star rating, vote count, genre chips.
+
+4.3 VITE REVERSE PROXY SETUP (vite.config.js)
+--------------------------------------------
+The development server proxies all '/api' calls to http://127.0.0.1:5000:
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true
+      }
+    }
+  }
+
+===================================================================================
+5. END-TO-END EXECUTION FLOW (FROM USER CLICK TO SCREEN RENDER)
+===================================================================================
+
+1. User enters "Inception" and presses Enter in the React web application.
+2. React sets isLoading = true, showing the spinning loader icon.
+3. React sends GET request to /api/recommend?movie=Inception&top_k=6.
+4. Vite reverse proxy forwards the request to Flask server on port 5000.
+5. Flask calls STATE["knn"].recommend("Inception", top_k=6).
+6. Recommender runs find_movie("Inception"), matching "Inception (2010)".
+7. Recommender extracts the 610-dimensional user vector from the CSR pivot matrix.
+8. Scikit-Learn kneighbors() computes Cosine Distances for all candidates.
+9. Top K closest neighbors (excluding the seed movie itself) are extracted.
+10. Metadata (genres, year, rating, vote count) and similarity percentage are attached.
+11. Flask responds with JSON payload.
+12. React receives JSON, sets isLoading = false, and renders:
+    - Seed movie spotlight banner.
+    - 6 recommendation cards with match percentages (e.g. The Dark Knight at ~72.79%).
+
+===================================================================================
+6. AUTOMATED UNIT TESTING & VERIFICATION
+===================================================================================
+
+Located in tests/test_recommender.py (8 test cases):
+1. test_schema_and_cleaning: Schema verification and rating bounds.
+2. test_sparsity_formula: Mathematical correctness of sparsity formula.
+3. test_pivot_matrix_dimensions: Valid matrix dimensions and no NaNs.
+4. test_knn_recommendations_valid_movie: Checks top-k count and similarity bounds.
+5. test_knn_genre_filter: Verifies genre filter enforcement.
+6. test_edge_case_unknown_movie: Graceful handling of non-existent titles.
+7. test_edge_case_empty_input: Safe handling of whitespace/blank inputs.
+8. test_descriptive_statistics: Verifies statistical metrics (mean ~3.50).
+
+Command to run tests:
+  python -m unittest discover tests
+Result:
+  Ran 8 tests in 0.58s -> OK
+
+===================================================================================
+7. HOW TO RUN THE PROJECT
+===================================================================================
+
+Prerequisites:
+- Python 3.9+
+- Node.js 18+ and npm
+
+Step 1: Install Python Dependencies
+  pip install -r requirements.txt
+
+Step 2: Start the Backend Web Service (Terminal 1)
+  python movie_recommender.py
+  (Runs on http://localhost:5000)
+
+Step 3: Start the Frontend Application (Terminal 2)
+  cd frontend
+  npm install
+  npm run dev
+  (Access web app in browser at http://localhost:5173)
+
+===================================================================================
+8. VIVA & TECHNICAL INTERVIEW Q&A (FAQ)
+===================================================================================
+
+Q1: What is Collaborative Filtering?
+A1: A recommendation technique based on historical user interaction patterns rather
+    than metadata. If users agreed on items in the past, they will agree in the future.
+
+Q2: Why Item-Based instead of User-Based Collaborative Filtering?
+A2: Item-item relationships are far more stable over time than user preference profiles,
+    and items are typically outnumbered by users, making item matrices cheaper to compute.
+
+Q3: Why Cosine Similarity instead of Euclidean Distance?
+A3: Euclidean distance suffers from rating scale bias (harsh vs generous raters).
+    Cosine similarity measures vector angle, capturing relative preference patterns.
+
+Q4: What is the Sparsity Problem and how did you resolve it?
+A4: Most users only rate a tiny fraction of movies (raw sparsity was 98.30%).
+    We filtered movies with < 10 ratings and users with < 5 ratings, reducing sparsity
+    to 94.14% and eliminating noise.
+
+Q5: What does the negative skewness (-0.64) mean?
+A5: Ratings are skewed toward higher values (Mode = 4.0, Mean = 3.50). Users self-select
+    movies they expect to like, rather than rating random movies.
+
+Q6: Why does Recall rise while Precision drops as K increases from 5 to 10?
+A6: Increasing K captures a higher fraction of total relevant items (higher Recall),
+    but lower-ranked items have slightly lower similarity scores (lower Precision).
+===================================================================================
