@@ -22,10 +22,11 @@ export default function App() {
   }, []);
 
   // Base URL for API requests (supports external backend deployment)
-  const API_BASE = (
-    import.meta.env.VITE_API_URL ||
-    (import.meta.env.PROD ? 'https://cinematch-0d4t.onrender.com' : '')
-  ).replace(/\/+$/, '');
+  let apiEnv = import.meta.env.VITE_API_URL || '';
+  if (!apiEnv || apiEnv.includes('cinematch-api.onrender.com')) {
+    apiEnv = import.meta.env.PROD ? 'https://cinematch-0d4t.onrender.com' : '';
+  }
+  const API_BASE = apiEnv.replace(/\/+$/, '');
 
   // Simple autocomplete search
   const handleInputChange = async (e) => {
